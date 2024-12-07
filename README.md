@@ -1,6 +1,6 @@
 # Three JS Animated Book Slider
 
 
-[Live demo](https://github.com/Bahkho/BookGlide.git)
+[Live demo](https://book-glide.vercel.app/)
 
 
