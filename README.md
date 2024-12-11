@@ -1,4 +1,4 @@
-# Three JS Animated Book Slider
+# Three JS Animated Book Glider
 
 
 <!-- [Live demo](https://book-glide.vercel.app/) -->
