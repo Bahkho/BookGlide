@@ -1,8 +1,8 @@
-import { useCursor, useTexture } from "@react-three/drei"; // Utility hooks for cursor and texture handling
-import { useFrame } from "@react-three/fiber"; // Hook for per-frame updates in Three.js
-import { useAtom } from "jotai"; // State management using Jotai atoms
-import { easing } from "maath"; // Easing functions for smooth transitions
-import { useEffect, useMemo, useRef, useState } from "react"; // React hooks for component lifecycle and state
+import { useCursor, useTexture } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
+import { useAtom } from "jotai";
+import { easing } from "maath";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bone,
   BoxGeometry,
@@ -15,24 +15,22 @@ import {
   SRGBColorSpace,
   Uint16BufferAttribute,
   Vector3,
-} from "three"; // Three.js classes for 3D objects and materials
-import { degToRad } from "three/src/math/MathUtils.js"; // Utility for converting degrees to radians
-import { pageAtom, pages } from "./UI"; // Import shared state and page data from UI component
+} from "three";
+import { degToRad } from "three/src/math/MathUtils.js";
+import { pageAtom, pages } from "./UI";
 
-// Constants for geometry and animation parameters
-const easingFactor = 0.5; // Controls general easing for animations
-const easingFactorFold = 0.3; // Controls easing for page folding
-const insideCurveStrength = 0.18; // Strength of inside curve while turning a page
-const outsideCurveStrength = 0.05; // Strength of outside curve
-const turningCurveStrength = 0.09; // Strength of the curve during page turn
+const easingFactor = 0.5; // Controls the speed of the easing
+const easingFactorFold = 0.3; // Controls the speed of the easing
+const insideCurveStrength = 0.18; // Controls the strength of the curve
+const outsideCurveStrength = 0.05; // Controls the strength of the curve
+const turningCurveStrength = 0.09; // Controls the strength of the curve
 
-const PAGE_WIDTH = 1.28; // Width of a single page
-const PAGE_HEIGHT = 1.71; // Height of a single page (4:3 aspect ratio)
-const PAGE_DEPTH = 0.003; // Depth of a single page
-const PAGE_SEGMENTS = 30; // Number of segments for page geometry
-const SEGMENT_WIDTH = PAGE_WIDTH / PAGE_SEGMENTS; // Width of each segment
+const PAGE_WIDTH = 1.28;
+const PAGE_HEIGHT = 1.71; // 4:3 aspect ratio
+const PAGE_DEPTH = 0.003;
+const PAGE_SEGMENTS = 30;
+const SEGMENT_WIDTH = PAGE_WIDTH / PAGE_SEGMENTS;
 
-// Create a box geometry for the pages
 const pageGeometry = new BoxGeometry(
   PAGE_WIDTH,
   PAGE_HEIGHT,
@@ -41,27 +39,25 @@ const pageGeometry = new BoxGeometry(
   2
 );
 
-pageGeometry.translate(PAGE_WIDTH / 2, 0, 0); // Adjust position so that pages rotate correctly
+pageGeometry.translate(PAGE_WIDTH / 2, 0, 0);
 
-// Skinning attributes for smooth page animations
 const position = pageGeometry.attributes.position;
 const vertex = new Vector3();
 const skinIndexes = [];
 const skinWeights = [];
 
 for (let i = 0; i < position.count; i++) {
-  // Process each vertex to assign skinning weights
-  vertex.fromBufferAttribute(position, i); // Get vertex position
-  const x = vertex.x;
+  // ALL VERTICES
+  vertex.fromBufferAttribute(position, i); // get the vertex
+  const x = vertex.x; // get the x position of the vertex
 
-  const skinIndex = Math.max(0, Math.floor(x / SEGMENT_WIDTH)); // Determine bone index
-  let skinWeight = (x % SEGMENT_WIDTH) / SEGMENT_WIDTH; // Calculate weight for smooth transitions
+  const skinIndex = Math.max(0, Math.floor(x / SEGMENT_WIDTH)); // calculate the skin index
+  let skinWeight = (x % SEGMENT_WIDTH) / SEGMENT_WIDTH; // calculate the skin weight
 
-  skinIndexes.push(skinIndex, skinIndex + 1, 0, 0); // Assign bone indexes
-  skinWeights.push(1 - skinWeight, skinWeight, 0, 0); // Assign weights
+  skinIndexes.push(skinIndex, skinIndex + 1, 0, 0); // set the skin indexes
+  skinWeights.push(1 - skinWeight, skinWeight, 0, 0); // set the skin weights
 }
 
-// Apply skin attributes to the geometry
 pageGeometry.setAttribute(
   "skinIndex",
   new Uint16BufferAttribute(skinIndexes, 4)
@@ -71,36 +67,31 @@ pageGeometry.setAttribute(
   new Float32BufferAttribute(skinWeights, 4)
 );
 
-// Material colors for pages
 const whiteColor = new Color("white");
 const emissiveColor = new Color("purple");
 
-// Page materials
 const pageMaterials = [
   new MeshStandardMaterial({
-    color: whiteColor, // Default white material
+    color: whiteColor,
   }),
   new MeshStandardMaterial({
-    color: "#111", // Dark material for page sides
+    color: "#111",
   }),
   new MeshStandardMaterial({
-    color: whiteColor, // Back page material
+    color: whiteColor,
   }),
   new MeshStandardMaterial({
-    color: whiteColor, // Front page material
+    color: whiteColor,
   }),
 ];
 
-// Preload textures for pages
 pages.forEach((page) => {
   useTexture.preload(`/textures/${page.front}.jpg`);
   useTexture.preload(`/textures/${page.back}.jpg`);
   useTexture.preload(`/textures/book-cover-roughness2.png`);
 });
 
-// Page component representing an individual page in the book
 const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
-  // Load textures for front and back of the page
   const [picture, picture2, pictureRoughness] = useTexture([
     `/textures/${front}.jpg`,
     `/textures/${back}.jpg`,
@@ -108,75 +99,73 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
       ? [`/textures/book-cover-roughness2.png`]
       : []),
   ]);
+  picture.colorSpace = picture2.colorSpace = SRGBColorSpace;
+  const group = useRef();
+  const turnedAt = useRef(0);
+  const lastOpened = useRef(opened);
 
-  picture.colorSpace = picture2.colorSpace = SRGBColorSpace; // Use correct color space for rendering
+  const skinnedMeshRef = useRef();
 
-  const group = useRef(); // Group reference for the page
-  const turnedAt = useRef(0); // Time when the page was last turned
-  const lastOpened = useRef(opened); // Track the open/close state of the page
-
-  const skinnedMeshRef = useRef(); // Reference for the skinned mesh
-
-  // Create a custom skinned mesh with skeleton
   const manualSkinnedMesh = useMemo(() => {
     const bones = [];
     for (let i = 0; i <= PAGE_SEGMENTS; i++) {
       let bone = new Bone();
       bones.push(bone);
       if (i === 0) {
-        bone.position.x = 0; // Root bone at origin
+        bone.position.x = 0;
       } else {
-        bone.position.x = SEGMENT_WIDTH; // Subsequent bones positioned based on segment width
+        bone.position.x = SEGMENT_WIDTH;
       }
       if (i > 0) {
-        bones[i - 1].add(bone); // Link bones in a hierarchy
+        bones[i - 1].add(bone); // attach the new bone to the previous bone
       }
     }
-    const skeleton = new Skeleton(bones); // Create skeleton from bones
+    const skeleton = new Skeleton(bones);
 
-    // Define materials for the page
     const materials = [
       ...pageMaterials,
       new MeshStandardMaterial({
         color: whiteColor,
-        map: picture, // Front page texture
+        map: picture,
         ...(number === 0
           ? {
-              roughnessMap: pictureRoughness, // Roughness texture for cover page
+              roughnessMap: pictureRoughness,
             }
           : {
               roughness: 0.1,
             }),
         emissive: emissiveColor,
-        emissiveIntensity: 0, // Emissive lighting
+        emissiveIntensity: 0,
       }),
       new MeshStandardMaterial({
         color: whiteColor,
-        map: picture2, // Back page texture
+        map: picture2,
         ...(number === pages.length - 1
           ? {
-              roughnessMap: pictureRoughness, // Roughness texture for back cover
+              roughnessMap: pictureRoughness,
             }
           : {
               roughness: 0.1,
             }),
         emissive: emissiveColor,
-        emissiveIntensity: 0, // Emissive lighting
+        emissiveIntensity: 0,
       }),
     ];
-
-    // Create skinned mesh
     const mesh = new SkinnedMesh(pageGeometry, materials);
-    mesh.castShadow = true; // Enable shadow casting
-    mesh.receiveShadow = true; // Enable shadow receiving
-    mesh.frustumCulled = false; // Avoid culling for better visibility
-    mesh.add(skeleton.bones[0]); // Attach skeleton to mesh
-    mesh.bind(skeleton); // Bind skeleton to mesh
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    mesh.add(skeleton.bones[0]);
+    mesh.bind(skeleton);
     return mesh;
   }, []);
 
+  // useHelper(skinnedMeshRef, SkeletonHelper, "red");
+
   useFrame((_, delta) => {
-    if (!skinnedMeshRef.current) return;
+    if (!skinnedMeshRef.current) {
+      return;
+    }
 
     const emissiveIntensity = highlighted ? 0.22 : 0;
     skinnedMeshRef.current.material[4].emissiveIntensity =
@@ -186,12 +175,65 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
         0.1
       );
 
-    // Handle page turning logic and animations
+    if (lastOpened.current !== opened) {
+      turnedAt.current = +new Date();
+      lastOpened.current = opened;
+    }
+    let turningTime = Math.min(400, new Date() - turnedAt.current) / 400;
+    turningTime = Math.sin(turningTime * Math.PI);
+
+    let targetRotation = opened ? -Math.PI / 2 : Math.PI / 2;
+    if (!bookClosed) {
+      targetRotation += degToRad(number * 0.8);
+    }
+
+    const bones = skinnedMeshRef.current.skeleton.bones;
+    for (let i = 0; i < bones.length; i++) {
+      const target = i === 0 ? group.current : bones[i];
+
+      const insideCurveIntensity = i < 8 ? Math.sin(i * 0.2 + 0.25) : 0;
+      const outsideCurveIntensity = i >= 8 ? Math.cos(i * 0.3 + 0.09) : 0;
+      const turningIntensity =
+        Math.sin(i * Math.PI * (1 / bones.length)) * turningTime;
+      let rotationAngle =
+        insideCurveStrength * insideCurveIntensity * targetRotation -
+        outsideCurveStrength * outsideCurveIntensity * targetRotation +
+        turningCurveStrength * turningIntensity * targetRotation;
+      let foldRotationAngle = degToRad(Math.sign(targetRotation) * 2);
+      if (bookClosed) {
+        if (i === 0) {
+          rotationAngle = targetRotation;
+          foldRotationAngle = 0;
+        } else {
+          rotationAngle = 0;
+          foldRotationAngle = 0;
+        }
+      }
+      easing.dampAngle(
+        target.rotation,
+        "y",
+        rotationAngle,
+        easingFactor,
+        delta
+      );
+
+      const foldIntensity =
+        i > 8
+          ? Math.sin(i * Math.PI * (1 / bones.length) - 0.5) * turningTime
+          : 0;
+      easing.dampAngle(
+        target.rotation,
+        "x",
+        foldRotationAngle * foldIntensity,
+        easingFactorFold,
+        delta
+      );
+    }
   });
 
-  const [_, setPage] = useAtom(pageAtom); // Atom for managing page state
-  const [highlighted, setHighlighted] = useState(false); // Highlight state for interaction
-  useCursor(highlighted); // Change cursor when interacting with the page
+  const [_, setPage] = useAtom(pageAtom);
+  const [highlighted, setHighlighted] = useState(false);
+  useCursor(highlighted);
 
   return (
     <group
@@ -199,15 +241,15 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
       ref={group}
       onPointerEnter={(e) => {
         e.stopPropagation();
-        setHighlighted(true); // Highlight page on hover
+        setHighlighted(true);
       }}
       onPointerLeave={(e) => {
         e.stopPropagation();
-        setHighlighted(false); // Remove highlight on hover leave
+        setHighlighted(false);
       }}
       onClick={(e) => {
         e.stopPropagation();
-        setPage(opened ? number : number + 1); // Navigate to the next or previous page
+        setPage(opened ? number : number + 1);
         setHighlighted(false);
       }}
     >
@@ -220,22 +262,36 @@ const Page = ({ number, front, back, page, opened, bookClosed, ...props }) => {
   );
 };
 
-// Book component representing the entire book
 export const Book = ({ ...props }) => {
-  const [page] = useAtom(pageAtom); // Current page state
-  const [delayedPage, setDelayedPage] = useState(page); // Delayed page state for smooth transitions
+  const [page] = useAtom(pageAtom);
+  const [delayedPage, setDelayedPage] = useState(page);
 
   useEffect(() => {
     let timeout;
     const goToPage = () => {
       setDelayedPage((delayedPage) => {
-        if (page === delayedPage) return delayedPage;
-        timeout = setTimeout(goToPage, Math.abs(page - delayedPage) > 2 ? 50 : 150);
-        return page > delayedPage ? delayedPage + 1 : delayedPage - 1;
+        if (page === delayedPage) {
+          return delayedPage;
+        } else {
+          timeout = setTimeout(
+            () => {
+              goToPage();
+            },
+            Math.abs(page - delayedPage) > 2 ? 50 : 150
+          );
+          if (page > delayedPage) {
+            return delayedPage + 1;
+          }
+          if (page < delayedPage) {
+            return delayedPage - 1;
+          }
+        }
       });
     };
     goToPage();
-    return () => clearTimeout(timeout); // Cleanup timeout
+    return () => {
+      clearTimeout(timeout);
+    };
   }, [page]);
 
   return (
